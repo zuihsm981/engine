@@ -35,7 +35,7 @@ jobs:
         id: engine-cache
         with:
           path: engine/src
-          key: engine-src-${{ steps.get_rev.outputs.revision }}-${{ github.run_id }}
+          key: engine-src-${{ steps.get_rev.outputs.revision }}
           restore-keys: |
             engine-src-${{ steps.get_rev.outputs.revision }}-
             engine-src-
@@ -50,22 +50,24 @@ jobs:
       - name: Generate GN build files
         working-directory: engine/src
         run: |
-          # 不使用 --out-dir，让脚本自动选择默认路径
+          # 保留 --unoptimized，默认生成 android_release_unopt_arm64
           ./flutter/tools/gn --runtime-mode=release --android --android-cpu=arm64 --unoptimized
 
-      - name: Debug - verify output directory
+      - name: Debug - list out directory
         working-directory: engine/src
         run: |
+          echo "Contents of out/:"
           ls -la out/
-          ls -la out/android_release_arm64/ || echo "Directory missing"
+          echo "Contents of out/android_release_unopt_arm64/:"
+          ls -la out/android_release_unopt_arm64/ || echo "Directory missing"
 
       - name: Build with Ninja
         working-directory: engine/src
         run: |
-          ninja -C out/android_release_arm64 unstripped
+          ninja -C out/android_release_unopt_arm64 unstripped
 
       - name: Upload engine artifact
         uses: actions/upload-artifact@v4
         with:
           name: libflutter_engine_android_arm64
-          path: engine/src/out/android_release_arm64/unstripped/libflutter_engine.so
+          path: engine/src/out/android_release_unopt_arm64/unstripped/libflutter_engine.so
