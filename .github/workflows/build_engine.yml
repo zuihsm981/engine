@@ -1,14 +1,13 @@
 name: Build Flutter Engine (arm64-v8a)
 
 on:
-  workflow_dispatch:  # 手动触发
+  workflow_dispatch:
 
 jobs:
   build-android-arm64:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. 安装系统依赖和 depot_tools
       - name: Install dependencies
         run: |
           sudo apt-get update
@@ -16,7 +15,6 @@ jobs:
           git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git $HOME/depot_tools
           echo "$HOME/depot_tools" >> $GITHUB_PATH
 
-      # 2. 获取 Flutter 3.24.3 对应的 Engine 修订号（commit hash）
       - name: Get engine revision
         id: get_rev
         run: |
@@ -24,16 +22,14 @@ jobs:
           echo "revision=$ENGINE_REV" >> $GITHUB_OUTPUT
           echo "Engine revision: $ENGINE_REV"
 
-      # 3. 检出 Flutter Engine（使用精确 commit）
       - name: Checkout Flutter Engine
         uses: actions/checkout@v4
         with:
           repository: flutter/engine
           ref: ${{ steps.get_rev.outputs.revision }}
-          fetch-depth: 1          # 浅克隆即可，因为 hash 已知
+          fetch-depth: 1
           path: engine
 
-      # 4. 缓存 engine/src 目录（含所有依赖，体积约 20GB）
       - name: Cache Engine source
         uses: actions/cache@v3
         id: engine-cache
@@ -44,40 +40,30 @@ jobs:
             engine-src-${{ steps.get_rev.outputs.revision }}-
             engine-src-
 
-      # 5. 同步依赖（gclient sync）
       - name: Sync dependencies
         working-directory: engine
         run: |
-          export GCLIENT_METRICS_OPT_IN=0   # 禁用统计，消除警告
+          export GCLIENT_METRICS_OPT_IN=0
           gclient config --spec='solutions=[{"name":"src/flutter","url":"https://github.com/flutter/engine.git","deps_file":"DEPS","managed":False}]'
           gclient sync --no-history
 
-      # 6. 生成 GN 构建文件（明确指定输出目录）
       - name: Generate GN build files
         working-directory: engine/src
         run: |
-          ./flutter/tools/gn --runtime-mode=release --android --android-cpu=arm64 --unoptimized --out-dir=out/android_release_arm64
+          # 不使用 --out-dir，让脚本自动选择默认路径
+          ./flutter/tools/gn --runtime-mode=release --android --android-cpu=arm64 --unoptimized
 
-      # 7. 列出输出目录（调试用）
-      - name: Debug - list out directory
+      - name: Debug - verify output directory
         working-directory: engine/src
         run: |
-          echo "Contents of out/:"
-          ls -la out/ || echo "out/ does not exist"
-          if [ -d out/android_release_arm64 ]; then
-            echo "Contents of out/android_release_arm64/:"
-            ls -la out/android_release_arm64/
-          else
-            echo "out/android_release_arm64 not found!"
-          fi
+          ls -la out/
+          ls -la out/android_release_arm64/ || echo "Directory missing"
 
-      # 8. 执行 Ninja 编译
       - name: Build with Ninja
         working-directory: engine/src
         run: |
           ninja -C out/android_release_arm64 unstripped
 
-      # 9. 上传产物（libflutter_engine.so）
       - name: Upload engine artifact
         uses: actions/upload-artifact@v4
         with:
