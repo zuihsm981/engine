@@ -50,24 +50,36 @@ jobs:
       - name: Generate GN build files
         working-directory: engine/src
         run: |
-          # 保留 --unoptimized，默认生成 android_release_unopt_arm64
           ./flutter/tools/gn --runtime-mode=release --android --android-cpu=arm64 --unoptimized
 
-      - name: Debug - list out directory
+      - name: Debug - list out directory (before build)
         working-directory: engine/src
         run: |
-          echo "Contents of out/:"
-          ls -la out/
-          echo "Contents of out/android_release_unopt_arm64/:"
-          ls -la out/android_release_unopt_arm64/ || echo "Directory missing"
+          echo "Contents of out/android_release_unopt_arm64:"
+          ls -la out/android_release_unopt_arm64/
 
-      - name: Build with Ninja
+      - name: Build with Ninja (default target)
         working-directory: engine/src
         run: |
-          ninja -C out/android_release_unopt_arm64 unstripped
+          ninja -C out/android_release_unopt_arm64
+
+      - name: Debug - list out directory (after build)
+        working-directory: engine/src
+        run: |
+          echo "Contents of out/android_release_unopt_arm64:"
+          ls -la out/android_release_unopt_arm64/
+          echo "Contents of lib.unstripped if exists:"
+          ls -la out/android_release_unopt_arm64/lib.unstripped/ || echo "lib.unstripped not found"
+          echo "Contents of unstripped if exists:"
+          ls -la out/android_release_unopt_arm64/unstripped/ || echo "unstripped not found"
 
       - name: Upload engine artifact
         uses: actions/upload-artifact@v4
         with:
           name: libflutter_engine_android_arm64
-          path: engine/src/out/android_release_unopt_arm64/unstripped/libflutter_engine.so
+          # 尝试常见路径，如果不存在则失败，但我们会从调试输出确定正确路径
+          path: |
+            engine/src/out/android_release_unopt_arm64/lib.unstripped/libflutter_engine.so
+            engine/src/out/android_release_unopt_arm64/unstripped/libflutter_engine.so
+          # 如果多个路径匹配，会一起上传，但实际只会存在一个
+          if-no-files-found: error
