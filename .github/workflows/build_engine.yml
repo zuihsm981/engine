@@ -54,21 +54,27 @@ jobs:
           gclient config --spec='solutions=[{"name":"src/flutter","url":"https://github.com/flutter/engine.git","deps_file":"DEPS","managed":False}]'
           gclient sync --no-history
 
-      # 6. 生成 GN 构建文件（修复架构参数）
-      - name: Generate GN build files
-        working-directory: engine/src
-        run: |
-          ./flutter/tools/gn --runtime-mode=release --android --android-cpu=arm64 --unoptimized
+      # 6. 生成 GN 构建文件（明确输出目录）
+- name: Generate GN build files
+  working-directory: engine/src
+  run: |
+    ./flutter/tools/gn --runtime-mode=release --android --android-cpu=arm64 --unoptimized --out-dir=out/android_release_arm64
 
-      # 7. 执行 Ninja 编译
-      - name: Build with Ninja
-        working-directory: engine/src
-        run: |
-          ninja -C out/android_release_arm64 unstripped
+# 7. 列出输出目录（调试用）
+- name: Debug - list out directory
+  working-directory: engine/src
+  run: |
+    echo "Contents of out/:"
+    ls -la out/ || echo "out/ does not exist"
+    if [ -d out/android_release_arm64 ]; then
+      echo "Contents of out/android_release_arm64/:"
+      ls -la out/android_release_arm64/
+    else
+      echo "out/android_release_arm64 not found!"
+    fi
 
-      # 8. 上传产物（libflutter_engine.so）
-      - name: Upload engine artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: libflutter_engine_android_arm64
-          path: engine/src/out/android_release_arm64/unstripped/libflutter_engine.so
+# 8. 执行 Ninja 编译
+- name: Build with Ninja
+  working-directory: engine/src
+  run: |
+    ninja -C out/android_release_arm64 unstripped
