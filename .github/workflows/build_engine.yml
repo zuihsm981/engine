@@ -20,8 +20,8 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: flutter/engine
-          ref: v3.24.3  # 对应你的版本
-													fetch-depth: 0
+          ref: v3.24.3
+          fetch-depth: 0
           path: engine
 
       # 3. 同步依赖 (gclient sync)
