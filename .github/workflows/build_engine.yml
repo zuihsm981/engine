@@ -1,13 +1,14 @@
 name: Build Flutter Engine (arm64-v8a)
 
 on:
-  workflow_dispatch:  # 允许手动触发
+  workflow_dispatch:  # 手动触发
 
 jobs:
   build-android-arm64:
     runs-on: ubuntu-latest
+
     steps:
-      # 1. 安装依赖和 depot_tools
+      # 1. 安装系统依赖和 depot_tools
       - name: Install dependencies
         run: |
           sudo apt-get update
@@ -15,35 +16,57 @@ jobs:
           git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git $HOME/depot_tools
           echo "$HOME/depot_tools" >> $GITHUB_PATH
 
-      # 2. 检出 Flutter Engine 源码
+      # 2. 获取 Flutter 3.24.3 对应的 Engine 修订号（commit hash）
+      - name: Get engine revision
+        id: get_rev
+        run: |
+          ENGINE_REV=$(curl -s https://raw.githubusercontent.com/flutter/flutter/3.24.3/bin/internal/engine.version)
+          echo "revision=$ENGINE_REV" >> $GITHUB_OUTPUT
+          echo "Engine revision: $ENGINE_REV"
+
+      # 3. 检出 Flutter Engine（使用精确 commit）
       - name: Checkout Flutter Engine
         uses: actions/checkout@v4
         with:
           repository: flutter/engine
-          ref: 3.24.3
-          fetch-depth: 0
+          ref: ${{ steps.get_rev.outputs.revision }}
+          fetch-depth: 1          # 浅克隆即可，因为 hash 已知
           path: engine
 
-      # 3. 同步依赖 (gclient sync)
+      # 4. 缓存 engine/src 目录（含所有依赖，体积约 20GB）
+      - name: Cache Engine source
+        uses: actions/cache@v3
+        id: engine-cache
+        with:
+          path: engine/src
+          key: engine-src-${{ steps.get_rev.outputs.revision }}-${{ github.run_id }}
+          restore-keys: |
+            engine-src-${{ steps.get_rev.outputs.revision }}-
+            engine-src-
+
+      # 5. 同步依赖（gclient sync）
+      # 注意：如果缓存命中，sync 会非常快（只做本地校验）
+      # 如果缓存未命中，将完整下载（第一次会较慢）
       - name: Sync dependencies
         working-directory: engine
         run: |
+          export GCLIENT_METRICS_OPT_IN=0   # 禁用统计，消除警告
           gclient config --spec='solutions=[{"name":"src/flutter","url":"https://github.com/flutter/engine.git","deps_file":"DEPS","managed":False}]'
           gclient sync --no-history
 
-      # 4. 生成 GN 构建文件
+      # 6. 生成 GN 构建文件（修复架构参数）
       - name: Generate GN build files
         working-directory: engine/src
         run: |
-          ./flutter/tools/gn --runtime-mode=release --arch=arm64 --unoptimized
+          ./flutter/tools/gn --runtime-mode=release --android --android-cpu=arm64 --unoptimized
 
-      # 5. 执行 Ninja 构建
+      # 7. 执行 Ninja 编译
       - name: Build with Ninja
         working-directory: engine/src
         run: |
           ninja -C out/android_release_arm64 unstripped
 
-      # 6. 上传构建产物 (libflutter_engine.so)
+      # 8. 上传产物（libflutter_engine.so）
       - name: Upload engine artifact
         uses: actions/upload-artifact@v4
         with:
