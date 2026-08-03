@@ -20,7 +20,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: flutter/engine
-          ref: v3.24.3
+          ref: 3.24.3
           fetch-depth: 0
           path: engine
 
