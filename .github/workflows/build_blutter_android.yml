@@ -1,7 +1,7 @@
 name: Build Blutter Android Runner (.so)
 
 on:
-  workflow_dispatch:   # 手动触发，无需输入参数
+  workflow_dispatch:
 
 jobs:
   build-android-so:
@@ -26,30 +26,24 @@ jobs:
       - name: Clone Blutter
         run: git clone https://github.com/worawit/blutter.git
 
-      - name: Patch build_dartvm.py for Android cross-compilation
+      - name: Patch dartvm_fetch_build.py for Android cross-compilation
         run: |
           cd blutter
-          # 备份原脚本
-          cp scripts/build_dartvm.py scripts/build_dartvm.py.bak
-          # 替换编译器为 NDK clang++，添加 Android 目标、共享库选项
-          sed -i 's|g++|aarch64-linux-android21-clang++|g' scripts/build_dartvm.py
-          sed -i 's|-O2|-O2 -fPIC -shared -target aarch64-linux-android21|g' scripts/build_dartvm.py
-          # 修改输出文件扩展名为 .so
-          sed -i 's|blutter_dartvm|libblutter.so|g' scripts/build_dartvm.py
-          # 修改链接选项，添加 -shared 和必要的 Android 库
-          sed -i 's|-ldart|-ldart -lc++_shared|g' scripts/build_dartvm.py
+          # 修改编译器为 NDK 的 clang++
+          sed -i 's|g++|aarch64-linux-android21-clang++|g' dartvm_fetch_build.py
+          # 添加 -shared -fPIC 以生成动态库
+          sed -i 's|-O2|-O2 -fPIC -shared -target aarch64-linux-android21|g' dartvm_fetch_build.py
+          # 将输出文件名从 blutter_dartvm 改为 libblutter.so
+          sed -i 's|blutter_dartvm|libblutter.so|g' dartvm_fetch_build.py
 
-      - name: Prepare libs directory and trigger Blutter
+      - name: Run Blutter to trigger build
         run: |
-          # 直接使用仓库中的 libs/arm64-v8a 目录，无需复制
           cd blutter
-          # 运行 blutter.py，它会自动下载 Dart SDK 并调用我们修改后的编译脚本
-          python3 blutter.py ../libs/arm64-v8a ../output || true   # 允许错误，因为编译已成功
+          python3 blutter.py ../libs/arm64-v8a ../output || true
 
-      - name: Extract snapshot hash from libapp.so
+      - name: Extract snapshot hash
         id: get_hash
         run: |
-          # 使用 nm 获取地址和大小
           ADDR=$(nm -D --print-size libs/arm64-v8a/libapp.so | grep _kDartVmSnapshotData | awk '{print $1}')
           SIZE=$(nm -D --print-size libs/arm64-v8a/libapp.so | grep _kDartVmSnapshotData | awk '{print $2}')
           if [ -z "$ADDR" ] || [ -z "$SIZE" ]; then
@@ -60,7 +54,7 @@ jobs:
           HASH=$(sha256sum snapshot_data.bin | cut -d' ' -f1)
           echo "hash=$HASH" >> $GITHUB_OUTPUT
 
-      - name: Rename generated .so with hash
+      - name: Rename and upload .so
         run: |
           cd blutter
           if [ -f libblutter.so ]; then
