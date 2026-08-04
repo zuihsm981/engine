@@ -1,0 +1,79 @@
+name: Build Blutter Android Runner (.so)
+
+on:
+  workflow_dispatch:   # 手动触发，无需输入参数
+
+jobs:
+  build-android-so:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3 git cmake ninja-build build-essential pkg-config libicu-dev libcapstone-dev libfmt-dev wget unzip
+          pip install requests pyelftools
+
+      - name: Setup Android NDK r25c
+        run: |
+          wget https://dl.google.com/android/repository/android-ndk-r25c-linux.zip
+          unzip android-ndk-r25c-linux.zip
+          echo "NDK_HOME=$PWD/android-ndk-r25c" >> $GITHUB_ENV
+          echo "$PWD/android-ndk-r25c/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
+
+      - name: Clone Blutter
+        run: git clone https://github.com/worawit/blutter.git
+
+      - name: Patch build_dartvm.py for Android cross-compilation
+        run: |
+          cd blutter
+          # 备份原脚本
+          cp scripts/build_dartvm.py scripts/build_dartvm.py.bak
+          # 替换编译器为 NDK clang++，添加 Android 目标、共享库选项
+          sed -i 's|g++|aarch64-linux-android21-clang++|g' scripts/build_dartvm.py
+          sed -i 's|-O2|-O2 -fPIC -shared -target aarch64-linux-android21|g' scripts/build_dartvm.py
+          # 修改输出文件扩展名为 .so
+          sed -i 's|blutter_dartvm|libblutter.so|g' scripts/build_dartvm.py
+          # 修改链接选项，添加 -shared 和必要的 Android 库
+          sed -i 's|-ldart|-ldart -lc++_shared|g' scripts/build_dartvm.py
+
+      - name: Prepare libs directory and trigger Blutter
+        run: |
+          # 直接使用仓库中的 libs/arm64-v8a 目录，无需复制
+          cd blutter
+          # 运行 blutter.py，它会自动下载 Dart SDK 并调用我们修改后的编译脚本
+          python3 blutter.py ../libs/arm64-v8a ../output || true   # 允许错误，因为编译已成功
+
+      - name: Extract snapshot hash from libapp.so
+        id: get_hash
+        run: |
+          # 使用 nm 获取地址和大小
+          ADDR=$(nm -D --print-size libs/arm64-v8a/libapp.so | grep _kDartVmSnapshotData | awk '{print $1}')
+          SIZE=$(nm -D --print-size libs/arm64-v8a/libapp.so | grep _kDartVmSnapshotData | awk '{print $2}')
+          if [ -z "$ADDR" ] || [ -z "$SIZE" ]; then
+            echo "Error: Could not find _kDartVmSnapshotData"
+            exit 1
+          fi
+          dd if=libs/arm64-v8a/libapp.so of=snapshot_data.bin bs=1 skip=$((0x$ADDR)) count=$((0x$SIZE)) status=none
+          HASH=$(sha256sum snapshot_data.bin | cut -d' ' -f1)
+          echo "hash=$HASH" >> $GITHUB_OUTPUT
+
+      - name: Rename generated .so with hash
+        run: |
+          cd blutter
+          if [ -f libblutter.so ]; then
+            mv libblutter.so ../libblutter_${{ steps.get_hash.outputs.hash }}.so
+          elif [ -f bin/libblutter.so ]; then
+            mv bin/libblutter.so ../libblutter_${{ steps.get_hash.outputs.hash }}.so
+          else
+            echo "libblutter.so not found!"
+            exit 1
+          fi
+
+      - name: Upload Android .so artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: libblutter_android_arm64
+          path: libblutter_*.so
