@@ -26,18 +26,27 @@ jobs:
       - name: Clone Blutter
         run: git clone https://github.com/worawit/blutter.git
 
-      - name: Patch blutter.py to target Android
+      - name: Force blutter.py to target Android/arm64
         run: |
           cd blutter
-          # 强制平台为 android，架构为 arm64
           sed -i "s|sys.platform|'android'|g" blutter.py
           sed -i "s|platform.machine()|'arm64'|g" blutter.py
 
-      - name: Patch dartvm_fetch_build.py for cross-compilation
+      - name: Patch dartvm_fetch_build.py to use NDK toolchain
         run: |
           cd blutter
-          # 在 CMake 命令中添加 NDK 交叉编译参数
-          sed -i "s|'--log-level=NOTICE'|'--log-level=NOTICE', '-DCMAKE_SYSTEM_NAME=Android', '-DCMAKE_SYSTEM_VERSION=21', '-DCMAKE_C_COMPILER=aarch64-linux-android21-clang', '-DCMAKE_CXX_COMPILER=aarch64-linux-android21-clang++'|" dartvm_fetch_build.py
+          python3 -c "
+import re
+with open('dartvm_fetch_build.py', 'r') as f:
+    content = f.read()
+# 找到 subprocess.run 调用 cmake 的那一行
+pattern = r\"(subprocess\.run\(\[CMAKE_CMD, '-GNinja', '-B', builddir, f'-DTARGET_OS=\{info\.os_name\}', f'-DTARGET_ARCH=\{info\.arch\}', f'-DCOMPRESSED_PTRS=\{1 if info\.has_compressed_ptrs else 0\}', '-DCMAKE_BUILD_TYPE=Release', '--log-level=NOTICE'\])\"
+# 替换为添加 NDK 工具链和 ABI 参数
+replacement = r\"\1, '-DCMAKE_TOOLCHAIN_FILE=' + os.environ.get('NDK_HOME', '') + '/build/cmake/android.toolchain.cmake', '-DANDROID_ABI=arm64-v8a', '-DANDROID_PLATFORM=android-21'\]\"
+new_content = re.sub(pattern, replacement, content)
+with open('dartvm_fetch_build.py', 'w') as f:
+    f.write(new_content)
+"
 
       - name: Run blutter.py (will trigger build)
         working-directory: blutter
@@ -60,10 +69,9 @@ jobs:
       - name: Find and rename generated .so
         run: |
           cd blutter
-          # 查找所有 .so 文件（可能在 build/ 或 bin/ 下）
+          # 查找生成的共享库（可能位于 build/ 或 bin/）
           SO_FILE=$(find . -name "libdartvm*.so" -type f | head -1)
           if [ -z "$SO_FILE" ]; then
-            # 也可能命名为 libblutter*.so
             SO_FILE=$(find . -name "libblutter*.so" -type f | head -1)
           fi
           if [ -z "$SO_FILE" ]; then
