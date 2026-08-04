@@ -26,22 +26,25 @@ jobs:
       - name: Clone Blutter
         run: git clone https://github.com/worawit/blutter.git
 
-      - name: Patch dartvm_fetch_build.py for Android cross-compilation
+      - name: Patch blutter.py to target Android
         run: |
           cd blutter
-          # 修改编译器为 NDK 的 clang++
-          sed -i 's|g++|aarch64-linux-android21-clang++|g' dartvm_fetch_build.py
-          # 添加 -shared -fPIC 以生成动态库
-          sed -i 's|-O2|-O2 -fPIC -shared -target aarch64-linux-android21|g' dartvm_fetch_build.py
-          # 将输出文件名从 blutter_dartvm 改为 libblutter.so
-          sed -i 's|blutter_dartvm|libblutter.so|g' dartvm_fetch_build.py
+          # 强制平台为 android，架构为 arm64
+          sed -i "s|sys.platform|'android'|g" blutter.py
+          sed -i "s|platform.machine()|'arm64'|g" blutter.py
 
-      - name: Run Blutter to trigger build
+      - name: Patch dartvm_fetch_build.py for cross-compilation
         run: |
           cd blutter
-          python3 blutter.py ../libs/arm64-v8a ../output || true
+          # 在 CMake 命令中添加 NDK 交叉编译参数
+          sed -i "s|'--log-level=NOTICE'|'--log-level=NOTICE', '-DCMAKE_SYSTEM_NAME=Android', '-DCMAKE_SYSTEM_VERSION=21', '-DCMAKE_C_COMPILER=aarch64-linux-android21-clang', '-DCMAKE_CXX_COMPILER=aarch64-linux-android21-clang++'|" dartvm_fetch_build.py
 
-      - name: Extract snapshot hash
+      - name: Run blutter.py (will trigger build)
+        working-directory: blutter
+        run: |
+          python3 blutter.py ../libs/arm64-v8a ../output
+
+      - name: Extract snapshot hash from libapp.so
         id: get_hash
         run: |
           ADDR=$(nm -D --print-size libs/arm64-v8a/libapp.so | grep _kDartVmSnapshotData | awk '{print $1}')
@@ -54,17 +57,21 @@ jobs:
           HASH=$(sha256sum snapshot_data.bin | cut -d' ' -f1)
           echo "hash=$HASH" >> $GITHUB_OUTPUT
 
-      - name: Rename and upload .so
+      - name: Find and rename generated .so
         run: |
           cd blutter
-          if [ -f libblutter.so ]; then
-            mv libblutter.so ../libblutter_${{ steps.get_hash.outputs.hash }}.so
-          elif [ -f bin/libblutter.so ]; then
-            mv bin/libblutter.so ../libblutter_${{ steps.get_hash.outputs.hash }}.so
-          else
-            echo "libblutter.so not found!"
+          # 查找所有 .so 文件（可能在 build/ 或 bin/ 下）
+          SO_FILE=$(find . -name "libdartvm*.so" -type f | head -1)
+          if [ -z "$SO_FILE" ]; then
+            # 也可能命名为 libblutter*.so
+            SO_FILE=$(find . -name "libblutter*.so" -type f | head -1)
+          fi
+          if [ -z "$SO_FILE" ]; then
+            echo "No .so file found!"
             exit 1
           fi
+          echo "Found: $SO_FILE"
+          cp "$SO_FILE" ../libblutter_${{ steps.get_hash.outputs.hash }}.so
 
       - name: Upload Android .so artifact
         uses: actions/upload-artifact@v4
