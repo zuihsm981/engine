@@ -1,4 +1,4 @@
-name: Build Blutter Android .so (with ICU)
+name: Build Blutter Android .so (NDK ICU)
 
 on:
   workflow_dispatch:
@@ -13,7 +13,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y python3 git cmake ninja-build build-essential pkg-config libicu-dev libcapstone-dev libfmt-dev wget unzip
+          sudo apt-get install -y python3 git cmake ninja-build build-essential pkg-config libcapstone-dev libfmt-dev wget unzip
           pip install requests pyelftools
 
       - name: Setup Android NDK r25c
@@ -23,12 +23,20 @@ jobs:
           echo "NDK_HOME=$PWD/android-ndk-r25c" >> $GITHUB_ENV
           echo "$PWD/android-ndk-r25c/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
 
-      - name: Download Android ICU prebuilt
+      - name: Set ICU paths from NDK
         run: |
-          # 下载 ICU 4c 71.1 Android 版本（可根据 Dart 版本调整）
-          wget https://github.com/unicode-org/icu/releases/download/release-71-1/icu4c-71_1-Android.zip
-          unzip icu4c-71_1-Android.zip -d icu_android
-          echo "ICU_ROOT=$PWD/icu_android" >> $GITHUB_ENV
+          # NDK 中 ICU 头文件位置
+          export ICU_INCLUDE_DIR="$NDK_HOME/sysroot/usr/include"
+          # NDK 中 ICU 库文件位置（aarch64）
+          export ICU_LIBRARY_DIR="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/21"
+          # 显式指定库文件（需要完整路径）
+          export ICU_UC_LIB="$ICU_LIBRARY_DIR/libicuuc.so"
+          export ICU_I18N_LIB="$ICU_LIBRARY_DIR/libicui18n.so"
+          export ICU_DATA_LIB="$ICU_LIBRARY_DIR/libicudata.so"
+          echo "ICU_INCLUDE_DIR=$ICU_INCLUDE_DIR" >> $GITHUB_ENV
+          echo "ICU_UC_LIB=$ICU_UC_LIB" >> $GITHUB_ENV
+          echo "ICU_I18N_LIB=$ICU_I18N_LIB" >> $GITHUB_ENV
+          echo "ICU_DATA_LIB=$ICU_DATA_LIB" >> $GITHUB_ENV
 
       - name: Clone Blutter
         run: git clone https://github.com/worawit/blutter.git
@@ -39,13 +47,18 @@ jobs:
           sed -i "s|sys.platform|'android'|g" blutter.py
           sed -i "s|platform.machine()|'arm64'|g" blutter.py
 
-      - name: Patch dartvm_fetch_build.py for ICU and NDK
+      - name: Patch dartvm_fetch_build.py for NDK and ICU paths
         run: |
           cd blutter
-          # 1. 在 CMake 行中加入 ICU_ROOT
-          sed -i "s|'--log-level=NOTICE'|'--log-level=NOTICE', '-DICU_ROOT=' + os.environ.get('ICU_ROOT', ''), '-DCMAKE_TOOLCHAIN_FILE=' + os.environ.get('NDK_HOME', '') + '/build/cmake/android.toolchain.cmake', '-DANDROID_ABI=arm64-v8a', '-DANDROID_PLATFORM=android-21', '-DCMAKE_C_COMPILER=aarch64-linux-android21-clang', '-DCMAKE_CXX_COMPILER=aarch64-linux-android21-clang++'|g" dartvm_fetch_build.py
-          # 2. 确保 import os 在顶部
+          # 在 CMake 行中添加 NDK 工具链和 ICU 路径
+          sed -i "s|'--log-level=NOTICE'|'--log-level=NOTICE', '-DCMAKE_TOOLCHAIN_FILE=' + os.environ.get('NDK_HOME', '') + '/build/cmake/android.toolchain.cmake', '-DANDROID_ABI=arm64-v8a', '-DANDROID_PLATFORM=android-21', '-DCMAKE_C_COMPILER=aarch64-linux-android21-clang', '-DCMAKE_CXX_COMPILER=aarch64-linux-android21-clang++', '-DICU_INCLUDE_DIR=' + os.environ.get('ICU_INCLUDE_DIR', ''), '-DICU_LIBRARY=' + os.environ.get('ICU_UC_LIB', ''), '-DICU_I18N_LIBRARY=' + os.environ.get('ICU_I18N_LIB', ''), '-DICU_DATA_LIBRARY=' + os.environ.get('ICU_DATA_LIB', '')|g" dartvm_fetch_build.py
+          # 确保 import os
           grep -q "^import os" dartvm_fetch_build.py || sed -i "1i import os" dartvm_fetch_build.py
+
+      - name: Debug - check modified CMake line
+        run: |
+          cd blutter
+          grep "subprocess.run" dartvm_fetch_build.py | head -1
 
       - name: Run blutter.py
         working-directory: blutter
@@ -78,5 +91,4 @@ jobs:
       - name: Upload Android .so artifact
         uses: actions/upload-artifact@v4
         with:
-          name: libblutter_android_arm64
           path: libblutter_*.so
