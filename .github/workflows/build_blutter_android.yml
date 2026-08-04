@@ -32,18 +32,47 @@ jobs:
           sed -i "s|sys.platform|'android'|g" blutter.py
           sed -i "s|platform.machine()|'arm64'|g" blutter.py
 
-      - name: Patch dartvm_fetch_build.py to add NDK toolchain
+      - name: Patch dartvm_fetch_build.py - add NDK params and error output
         run: |
           cd blutter
-          # 在 '--log-level=NOTICE' 后面插入 NDK 参数
-          sed -i "s|'--log-level=NOTICE'|'--log-level=NOTICE', '-DCMAKE_TOOLCHAIN_FILE=' + os.environ.get('NDK_HOME', '') + '/build/cmake/android.toolchain.cmake', '-DANDROID_ABI=arm64-v8a', '-DANDROID_PLATFORM=android-21'|g" dartvm_fetch_build.py
-          # 确保 import os 在文件顶部
+          # 添加 NDK 参数到 CMake 行
+          sed -i "s|'--log-level=NOTICE'|'--log-level=NOTICE', '-DCMAKE_TOOLCHAIN_FILE=' + os.environ.get('NDK_HOME', '') + '/build/cmake/android.toolchain.cmake', '-DANDROID_ABI=arm64-v8a', '-DANDROID_PLATFORM=android-21', '-DCMAKE_C_COMPILER=aarch64-linux-android21-clang', '-DCMAKE_CXX_COMPILER=aarch64-linux-android21-clang++'|g" dartvm_fetch_build.py
+          # 确保 import os, sys
           grep -q "^import os" dartvm_fetch_build.py || sed -i "1i import os" dartvm_fetch_build.py
+          grep -q "^import sys" dartvm_fetch_build.py || sed -i "2i import sys" dartvm_fetch_build.py
+          # 用 Python 脚本替换 subprocess.run 调用为带错误输出的版本
+          python3 << 'EOF'
+          import re
+          with open('dartvm_fetch_build.py', 'r') as f:
+              lines = f.readlines()
+          new_lines = []
+          i = 0
+          while i < len(lines):
+              line = lines[i]
+              if line.strip().startswith('subprocess.run([CMAKE_CMD,') and '--log-level=NOTICE' in line:
+                  indent = ' ' * (len(line) - len(line.lstrip()))
+                  # 替换为 try-except 包装
+                  new_lines.append(indent + 'try:\n')
+                  new_lines.append(indent + f'    result = subprocess.run({line.strip().rstrip(",")}, capture_output=True, text=True, check=False)\n')
+                  new_lines.append(indent + '    if result.returncode != 0:\n')
+                  new_lines.append(indent + '        print("CMake Error:")\n')
+                  new_lines.append(indent + '        print(result.stderr)\n')
+                  new_lines.append(indent + '        sys.exit(result.returncode)\n')
+                  new_lines.append(indent + 'except Exception as e:\n')
+                  new_lines.append(indent + '    print(e)\n')
+                  new_lines.append(indent + '    sys.exit(1)\n')
+                  i += 1
+              else:
+                  new_lines.append(line)
+                  i += 1
+          with open('dartvm_fetch_build.py', 'w') as f:
+              f.writelines(new_lines)
+          EOF
 
-      - name: Debug - show modified line
+      - name: Debug - show modified subprocess.run
         run: |
           cd blutter
-          grep -A2 "subprocess.run" dartvm_fetch_build.py
+          grep -A10 "subprocess.run" dartvm_fetch_build.py | head -20
 
       - name: Run blutter.py (will trigger build)
         working-directory: blutter
